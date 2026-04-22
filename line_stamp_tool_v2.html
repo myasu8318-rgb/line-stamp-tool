@@ -1,0 +1,736 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LINEスタンプ作成ツール</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: sans-serif; background: #f5f5f5; color: #333; min-height: 100vh; }
+h1 { font-size: 20px; font-weight: 500; padding: 20px 24px 0; }
+.sub { font-size: 13px; color: #888; padding: 4px 24px 16px; }
+.container { max-width: 900px; margin: 0 auto; padding: 0 16px 40px; }
+.card { background: #fff; border-radius: 12px; border: 0.5px solid #ddd; padding: 20px; margin-bottom: 16px; }
+.card-title { font-size: 14px; font-weight: 500; margin-bottom: 12px; color: #444; }
+.drop-zone { border: 1.5px dashed #bbb; border-radius: 8px; padding: 32px; text-align: center; cursor: pointer; transition: border-color 0.2s; background: #fafafa; }
+.drop-zone:hover, .drop-zone.drag-over { border-color: #666; background: #f0f0f0; }
+.drop-zone p { font-size: 14px; color: #888; margin-top: 8px; }
+.drop-zone .icon { font-size: 32px; }
+.sheets-preview { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+.sheet-card { border: 0.5px solid #ddd; border-radius: 8px; overflow: hidden; position: relative; }
+.sheet-card img { width: 100%; display: block; }
+.sheet-card .sheet-label { position: absolute; top: 6px; left: 6px; background: rgba(0,0,0,0.6); color: #fff; font-size: 11px; padding: 2px 8px; border-radius: 4px; }
+.sheet-card .swap-btn { position: absolute; top: 6px; right: 6px; background: rgba(255,255,255,0.9); border: 0.5px solid #ccc; border-radius: 4px; font-size: 11px; padding: 2px 8px; cursor: pointer; }
+.row { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.row label { font-size: 13px; color: #666; width: 120px; flex-shrink: 0; }
+.row input[type=range] { flex: 1; }
+.row .val { font-size: 13px; font-weight: 500; width: 48px; text-align: right; }
+.stamps-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 6px; margin-top: 8px; }
+.stamp-thumb { border: 2px solid transparent; border-radius: 6px; cursor: pointer; overflow: hidden; background: repeating-conic-gradient(#eee 0% 25%, #fff 0% 50%) 0 0 / 12px 12px; position: relative; }
+.stamp-thumb img { width: 100%; display: block; }
+.stamp-thumb.selected { border-color: #333; }
+.stamp-thumb .num { position: absolute; bottom: 2px; right: 3px; font-size: 9px; color: #fff; background: rgba(0,0,0,0.5); padding: 0 3px; border-radius: 2px; }
+.btn { display: inline-block; padding: 10px 24px; border-radius: 8px; border: 0.5px solid #333; background: #333; color: #fff; font-size: 14px; cursor: pointer; transition: opacity 0.15s; }
+.btn:hover { opacity: 0.85; }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-outline { background: transparent; color: #333; }
+.btn-outline:hover { background: #f0f0f0; }
+.main-preview { display: flex; gap: 16px; align-items: flex-start; margin-top: 8px; }
+.main-preview-box { border: 0.5px solid #ddd; border-radius: 6px; overflow: hidden; background: repeating-conic-gradient(#eee 0% 25%, #fff 0% 50%) 0 0 / 12px 12px; }
+.preview-label { font-size: 11px; color: #999; margin-bottom: 4px; }
+.section-divider { height: 0.5px; background: #eee; margin: 16px 0; }
+.status { font-size: 13px; color: #888; margin-top: 8px; }
+.status.ok { color: #2a7; }
+.status.err { color: #c44; }
+#canvas-work { display: none; }
+</style>
+</head>
+<body>
+<h1>LINEスタンプ作成ツール</h1>
+<p class="sub">背景透過 → スタンプシート2枚 → 32枚分割 → ZIP出力（01.png〜32.png + main.png + tab.png）</p>
+<div class="container">
+
+<div class="card" id="stepBG">
+  <div class="card-title">STEP 0 ： 背景透過（任意）</div>
+  <p style="font-size:12px;color:#999;margin-bottom:12px;">白背景を透明にします。スライダーで範囲調整後、ブラシで細かく修正できます。</p>
+
+  <div id="bgUI" style="display:none;">
+    <!-- スライダー -->
+    <div class="row">
+      <label style="width:130px;font-size:13px;">許容範囲（白の幅）</label>
+      <input type="range" id="bgThreshold" min="1" max="80" value="30" step="1" style="flex:1;">
+      <span class="val" id="bgThresholdVal">30</span>
+    </div>
+    <div class="row">
+      <label style="width:130px;font-size:13px;">縁のぼかし（px）</label>
+      <input type="range" id="bgFeather" min="0" max="8" value="2" step="1" style="flex:1;">
+      <span class="val" id="bgFeatherVal">2</span>
+    </div>
+
+    <div class="section-divider"></div>
+
+    <!-- ブラシツール -->
+    <div style="margin-bottom:8px;">
+      <div style="font-size:13px;font-weight:500;color:#444;margin-bottom:8px;">ブラシ編集（任意）</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">
+        <button class="btn" id="btnBrushProtect" style="background:#2a7;border-color:#2a7;padding:7px 14px;font-size:12px;">🛡 保護ブラシ</button>
+        <button class="btn btn-outline" id="btnBrushErase" style="padding:7px 14px;font-size:12px;">✕ 保護解除</button>
+        <button class="btn btn-outline" id="btnBrushClear" style="padding:7px 14px;font-size:12px;">🗑 保護リセット</button>
+        <div style="display:flex;align-items:center;gap:6px;margin-left:8px;">
+          <span style="font-size:12px;color:#666;">サイズ</span>
+          <input type="range" id="brushSize" min="2" max="60" value="16" step="1" style="width:80px;">
+          <span id="brushSizeVal" style="font-size:12px;font-weight:500;width:28px;">16</span>
+        </div>
+      </div>
+      <p style="font-size:11px;color:#888;margin-bottom:8px;">
+        🛡 保護ブラシ＝透過させたくない境界をなぞる（緑表示）　✕ 保護解除＝保護を消す
+      </p>
+      <!-- シート選択タブ -->
+      <div style="display:flex;gap:4px;margin-bottom:6px;">
+        <button class="btn" id="tabSheetA" style="padding:5px 16px;font-size:12px;">シートA</button>
+        <button class="btn btn-outline" id="tabSheetB" style="padding:5px 16px;font-size:12px;">シートB</button>
+      </div>
+    </div>
+
+    <!-- ブラシキャンバス（1枚表示） -->
+    <div style="position:relative;border:1.5px solid #5b6af0;border-radius:8px;overflow:hidden;margin-bottom:12px;cursor:crosshair;" id="brushWrap">
+      <canvas id="bgMaskCanvas" style="width:100%;display:block;"></canvas>
+      <!-- カーソルプレビュー -->
+      <div id="brushCursor" style="position:absolute;border:1.5px solid #333;border-radius:50%;pointer-events:none;display:none;transform:translate(-50%,-50%);"></div>
+    </div>
+
+    <p style="font-size:11px;color:#e07000;margin-bottom:10px;">▼ 赤＝透過予定　緑＝保護（透過しない）　スライダー変更で即時更新</p>
+
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">
+      <button class="btn" id="btnBGRemove" style="background:#2a9d6a;border-color:#2a9d6a;">✦ この設定で透過を実行</button>
+      <button class="btn btn-outline" id="btnBGReset" style="font-size:12px;padding:8px 14px;">元に戻す</button>
+    </div>
+
+    <!-- 実行後プレビュー -->
+    <div id="bgPreviews" style="display:none;">
+      <div class="preview-label" style="margin-bottom:6px;">透過後プレビュー（チェッカー＝透明）</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div><div class="preview-label">シートA</div><canvas id="bgPreviewA" style="width:100%;border-radius:6px;border:0.5px solid #ddd;"></canvas></div>
+        <div><div class="preview-label">シートB</div><canvas id="bgPreviewB" style="width:100%;border-radius:6px;border:0.5px solid #ddd;"></canvas></div>
+      </div>
+    </div>
+  </div>
+  <div id="bgStatus" class="status"></div>
+</div>
+
+<div class="card">
+  <div class="card-title">STEP 1 ： スタンプシートを読み込む</div>
+  <div class="drop-zone" id="dropZone">
+    <div class="icon">&#128444;</div>
+    <p>シートA・Bを2枚まとめてドロップ<br>またはクリックして選択</p>
+    <input type="file" id="fileInput" accept="image/png" multiple style="display:none">
+  </div>
+  <div class="sheets-preview" id="sheetsPreview" style="display:none"></div>
+  <div class="status" id="sheetStatus"></div>
+</div>
+
+<div class="card" id="stepGrid" style="display:none">
+  <div class="card-title">STEP 2 ： グリッド調整</div>
+  <div class="row">
+    <label>上余白 (px)</label>
+    <input type="range" id="padTop" min="0" max="200" value="0" step="1">
+    <span class="val" id="vPadTop">0</span>
+  </div>
+  <div class="row">
+    <label>下余白 (px)</label>
+    <input type="range" id="padBottom" min="0" max="200" value="0" step="1">
+    <span class="val" id="vPadBottom">0</span>
+  </div>
+  <div class="row">
+    <label>左余白 (px)</label>
+    <input type="range" id="padLeft" min="0" max="200" value="0" step="1">
+    <span class="val" id="vPadLeft">0</span>
+  </div>
+  <div class="row">
+    <label>右余白 (px)</label>
+    <input type="range" id="padRight" min="0" max="200" value="0" step="1">
+    <span class="val" id="vPadRight">0</span>
+  </div>
+  <div class="row">
+    <label>列間 (px)</label>
+    <input type="range" id="gapX" min="0" max="100" value="0" step="1">
+    <span class="val" id="vGapX">0</span>
+  </div>
+  <div class="row">
+    <label>行間 (px)</label>
+    <input type="range" id="gapY" min="0" max="100" value="0" step="1">
+    <span class="val" id="vGapY">0</span>
+  </div>
+  <div class="section-divider"></div>
+  <div class="card-title">プレビュー（グリッドライン）</div>
+  <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:8px;">
+    <div>
+      <div class="preview-label">シートA（01〜16）</div>
+      <canvas id="previewA" style="width:100%;border-radius:6px;border:0.5px solid #ddd;"></canvas>
+    </div>
+    <div>
+      <div class="preview-label">シートB（17〜32）</div>
+      <canvas id="previewB" style="width:100%;border-radius:6px;border:0.5px solid #ddd;"></canvas>
+    </div>
+  </div>
+</div>
+
+<div class="card" id="stepMain" style="display:none">
+  <div class="card-title">STEP 3 ： メイン画像を選ぶ（クリックで選択）</div>
+  <p style="font-size:12px;color:#999;margin-bottom:8px;">選択したスタンプが main.png と tab.png になります</p>
+  <div class="stamps-grid" id="stampsGrid"></div>
+  <div class="main-preview" id="mainPreview" style="margin-top:12px; display:none;">
+    <div>
+      <div class="preview-label">main.png（240×240）</div>
+      <div class="main-preview-box"><canvas id="prevMain" width="96" height="96" style="display:block;"></canvas></div>
+    </div>
+    <div>
+      <div class="preview-label">tab.png（96×74）</div>
+      <div class="main-preview-box"><canvas id="prevTab" width="48" height="37" style="display:block;"></canvas></div>
+    </div>
+  </div>
+</div>
+
+<div class="card" id="stepDownload" style="display:none">
+  <div class="card-title">STEP 4 ： ZIPダウンロード</div>
+  <p style="font-size:13px;color:#888;margin-bottom:12px;">01.png〜32.png（370×320）＋ main.png（240×240）＋ tab.png（96×74）の計34ファイル</p>
+  <button class="btn" id="btnDownload">ZIPをダウンロード</button>
+  <div class="status" id="dlStatus"></div>
+</div>
+
+</div>
+<canvas id="canvas-work"></canvas>
+
+<script>
+const dropZone = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+const sheetsPreview = document.getElementById('sheetsPreview');
+const sheetStatus = document.getElementById('sheetStatus');
+const stepGrid = document.getElementById('stepGrid');
+const stepMain = document.getElementById('stepMain');
+const stepDownload = document.getElementById('stepDownload');
+const stampsGrid = document.getElementById('stampsGrid');
+const mainPreview = document.getElementById('mainPreview');
+const btnDownload = document.getElementById('btnDownload');
+const dlStatus = document.getElementById('dlStatus');
+const canvasWork = document.getElementById('canvas-work');
+const ctx = canvasWork.getContext('2d');
+
+let imgA = null, imgB = null;
+let selectedMain = 0;
+let stampCanvases = [];
+
+// ===== STEP 0: 背景透過 ＋ ブラシ編集 =====
+const btnBGRemove = document.getElementById('btnBGRemove');
+const btnBGReset  = document.getElementById('btnBGReset');
+const bgStatus    = document.getElementById('bgStatus');
+const bgUI        = document.getElementById('bgUI');
+const bgPreviews  = document.getElementById('bgPreviews');
+const bgThresholdSlider = document.getElementById('bgThreshold');
+const bgFeatherSlider   = document.getElementById('bgFeather');
+const brushSizeSlider   = document.getElementById('brushSize');
+const btnBrushProtect   = document.getElementById('btnBrushProtect');
+const btnBrushErase     = document.getElementById('btnBrushErase');
+const btnBrushClear     = document.getElementById('btnBrushClear');
+const tabSheetA         = document.getElementById('tabSheetA');
+const tabSheetB         = document.getElementById('tabSheetB');
+const brushWrap         = document.getElementById('brushWrap');
+const brushCursor       = document.getElementById('brushCursor');
+const maskCanvas        = document.getElementById('bgMaskCanvas');
+
+// Image → Canvas
+function imageToCanvas(img) {
+  const c = document.createElement('canvas');
+  c.width = img.width; c.height = img.height;
+  c.getContext('2d').drawImage(img, 0, 0);
+  return c;
+}
+function base64ToImage(b64) {
+  return new Promise(res => {
+    const img = new Image();
+    img.onload = () => res(img);
+    img.src = 'data:image/png;base64,' + b64;
+  });
+}
+
+let origImgA = null, origImgB = null;
+// 保護マスク（0=通常 1=保護）をシートA/B別に管理
+let protectMaskA = null, protectMaskB = null;
+let activeSheet = 'A'; // 現在編集中のシート
+let brushMode = 'protect'; // 'protect' or 'erase'
+let isPainting = false;
+
+brushSizeSlider.addEventListener('input', () => {
+  document.getElementById('brushSizeVal').textContent = brushSizeSlider.value;
+});
+
+// フラッドフィルマスク生成
+function buildFloodMask(img, threshold) {
+  const w = img.width, h = img.height;
+  const data = imageToCanvas(img).getContext('2d').getImageData(0, 0, w, h).data;
+  const mask = new Uint8Array(w * h);
+  const queue = [];
+  function enqueue(x, y) {
+    if (x<0||y<0||x>=w||y>=h) return;
+    const idx = y*w+x;
+    if (mask[idx]) return;
+    const i = idx*4;
+    if (data[i]<255-threshold||data[i+1]<255-threshold||data[i+2]<255-threshold) return;
+    mask[idx]=1; queue.push(idx);
+  }
+  for (let x=0;x<w;x++){enqueue(x,0);enqueue(x,h-1);}
+  for (let y=0;y<h;y++){enqueue(0,y);enqueue(w-1,y);}
+  let head=0;
+  while(head<queue.length){
+    const idx=queue[head++], x=idx%w, y=Math.floor(idx/w);
+    enqueue(x+1,y);enqueue(x-1,y);enqueue(x,y+1);enqueue(x,y-1);
+  }
+  return {mask,w,h};
+}
+
+// ブラシキャンバスを描画（赤=透過予定 緑=保護）
+function redrawMaskCanvas() {
+  const img = activeSheet==='A' ? imgA : imgB;
+  const protectMask = activeSheet==='A' ? protectMaskA : protectMaskB;
+  if (!img || !protectMask) return;
+
+  const thr = +bgThresholdSlider.value;
+  const {mask:floodMask, w, h} = buildFloodMask(img, thr);
+
+  maskCanvas.width = w; maskCanvas.height = h;
+  const ctx2 = maskCanvas.getContext('2d');
+  // 元画像
+  ctx2.drawImage(imageToCanvas(img), 0, 0);
+  // オーバーレイ
+  const overlay = ctx2.getImageData(0, 0, w, h);
+  const od = overlay.data;
+  for (let i=0; i<w*h; i++) {
+    if (protectMask[i]) {
+      // 保護: 緑
+      od[i*4]=40; od[i*4+1]=180; od[i*4+2]=80; od[i*4+3]=160;
+    } else if (floodMask[i]) {
+      // 透過予定: 赤
+      od[i*4]=220; od[i*4+1]=40; od[i*4+2]=40; od[i*4+3]=160;
+    }
+  }
+  ctx2.putImageData(overlay, 0, 0);
+}
+
+// デバウンス
+let maskDebounce = null;
+function updateMaskCanvas() {
+  clearTimeout(maskDebounce);
+  maskDebounce = setTimeout(redrawMaskCanvas, 60);
+}
+
+// スライダー変更
+bgThresholdSlider.addEventListener('input', () => {
+  document.getElementById('bgThresholdVal').textContent = bgThresholdSlider.value;
+  updateMaskCanvas();
+});
+bgFeatherSlider.addEventListener('input', () => {
+  document.getElementById('bgFeatherVal').textContent = bgFeatherSlider.value;
+});
+
+// シート切替タブ
+function setActiveSheet(s) {
+  activeSheet = s;
+  tabSheetA.className = s==='A' ? 'btn' : 'btn btn-outline';
+  tabSheetB.className = s==='B' ? 'btn' : 'btn btn-outline';
+  tabSheetA.style.cssText = s==='A' ? '' : '';
+  redrawMaskCanvas();
+}
+tabSheetA.addEventListener('click', () => setActiveSheet('A'));
+tabSheetB.addEventListener('click', () => setActiveSheet('B'));
+
+// ブラシモード切替
+btnBrushProtect.addEventListener('click', () => {
+  brushMode='protect';
+  btnBrushProtect.style.opacity='1';
+  btnBrushErase.style.opacity='0.55';
+  maskCanvas.style.cursor='crosshair';
+});
+btnBrushErase.addEventListener('click', () => {
+  brushMode='erase';
+  btnBrushProtect.style.opacity='0.55';
+  btnBrushErase.style.opacity='1';
+  maskCanvas.style.cursor='cell';
+});
+btnBrushClear.addEventListener('click', () => {
+  const img = activeSheet==='A' ? imgA : imgB;
+  if (!img) return;
+  if (activeSheet==='A') protectMaskA = new Uint8Array(img.width * img.height);
+  else protectMaskB = new Uint8Array(img.width * img.height);
+  redrawMaskCanvas();
+});
+
+// ブラシ描画
+function paintAt(cx, cy) {
+  const img = activeSheet==='A' ? imgA : imgB;
+  const protectMask = activeSheet==='A' ? protectMaskA : protectMaskB;
+  if (!img || !protectMask) return;
+
+  const rect = maskCanvas.getBoundingClientRect();
+  const scaleX = img.width / rect.width;
+  const scaleY = img.height / rect.height;
+  const rx = Math.round(+brushSizeSlider.value * scaleX / 2);
+  const ry = Math.round(+brushSizeSlider.value * scaleY / 2);
+  const px = Math.round(cx * scaleX);
+  const py = Math.round(cy * scaleY);
+  const w = img.width, h = img.height;
+
+  for (let dy=-ry; dy<=ry; dy++) for (let dx=-rx; dx<=rx; dx++) {
+    if ((dx*dx)/(rx*rx)+(dy*dy)/(ry*ry) > 1) continue;
+    const x=px+dx, y=py+dy;
+    if (x<0||y<0||x>=w||y>=h) continue;
+    protectMask[y*w+x] = brushMode==='protect' ? 1 : 0;
+  }
+  redrawMaskCanvas();
+}
+
+// マウス/タッチイベント
+maskCanvas.addEventListener('mousedown', e => {
+  isPainting = true;
+  const r = maskCanvas.getBoundingClientRect();
+  paintAt(e.clientX - r.left, e.clientY - r.top);
+});
+maskCanvas.addEventListener('mousemove', e => {
+  const r = maskCanvas.getBoundingClientRect();
+  const x = e.clientX - r.left, y = e.clientY - r.top;
+  // カーソル表示
+  const sz = +brushSizeSlider.value;
+  brushCursor.style.display = 'block';
+  brushCursor.style.left = x+'px'; brushCursor.style.top = y+'px';
+  brushCursor.style.width = sz+'px'; brushCursor.style.height = sz+'px';
+  brushCursor.style.borderColor = brushMode==='protect' ? '#2a7' : '#c44';
+  if (isPainting) paintAt(x, y);
+});
+maskCanvas.addEventListener('mouseup', () => { isPainting=false; });
+maskCanvas.addEventListener('mouseleave', () => { isPainting=false; brushCursor.style.display='none'; });
+// タッチ対応
+maskCanvas.addEventListener('touchstart', e => {
+  e.preventDefault(); isPainting=true;
+  const r=maskCanvas.getBoundingClientRect(), t=e.touches[0];
+  paintAt(t.clientX-r.left, t.clientY-r.top);
+},{passive:false});
+maskCanvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  const r=maskCanvas.getBoundingClientRect(), t=e.touches[0];
+  if(isPainting) paintAt(t.clientX-r.left, t.clientY-r.top);
+},{passive:false});
+maskCanvas.addEventListener('touchend', () => { isPainting=false; });
+
+function initBGUI() {
+  bgUI.style.display = 'block';
+  bgPreviews.style.display = 'none';
+  bgStatus.textContent = '';
+  activeSheet = 'A';
+  tabSheetA.className='btn'; tabSheetB.className='btn btn-outline';
+  brushMode = 'protect';
+  btnBrushProtect.style.opacity='1'; btnBrushErase.style.opacity='0.55';
+  if (imgA) protectMaskA = new Uint8Array(imgA.width * imgA.height);
+  if (imgB) protectMaskB = new Uint8Array(imgB.width * imgB.height);
+  setTimeout(redrawMaskCanvas, 80);
+}
+
+// 透過実行
+function removeWhiteBackground(img, protectMask, threshold, featherPx) {
+  const {mask:floodMask, w, h} = buildFloodMask(img, threshold);
+  const c = imageToCanvas(img);
+  const ctx2 = c.getContext('2d');
+  const imageData = ctx2.getImageData(0, 0, w, h);
+  const data = imageData.data;
+
+  // 透過: フラッドフィル対象 かつ 保護なし
+  for (let idx=0; idx<w*h; idx++) {
+    if (floodMask[idx] && !protectMask[idx]) data[idx*4+3]=0;
+  }
+
+  if (featherPx>0) {
+    const alpha = new Float32Array(w*h);
+    for (let i=0;i<w*h;i++) alpha[i]=data[i*4+3];
+    for (let pass=0;pass<featherPx;pass++) {
+      const prev=alpha.slice();
+      for (let y=1;y<h-1;y++) for (let x=1;x<w-1;x++) {
+        const idx=y*w+x;
+        if (prev[idx]>0 && Math.min(prev[idx-1],prev[idx+1],prev[idx-w],prev[idx+w])===0)
+          alpha[idx]=Math.min(alpha[idx], Math.round(255*(pass+1)/(featherPx+1)));
+      }
+    }
+    for (let i=0;i<w*h;i++) data[i*4+3]=alpha[i];
+  }
+  ctx2.putImageData(imageData, 0, 0);
+  return c;
+}
+
+function renderWithChecker(srcCanvas, previewCanvasId) {
+  const pc = document.getElementById(previewCanvasId);
+  pc.width=srcCanvas.width; pc.height=srcCanvas.height;
+  const pctx=pc.getContext('2d');
+  const size=Math.max(8, Math.round(srcCanvas.width/60));
+  for (let y=0;y<srcCanvas.height;y+=size)
+    for (let x=0;x<srcCanvas.width;x+=size) {
+      pctx.fillStyle=((x/size+y/size)%2===0)?'#ccc':'#fff';
+      pctx.fillRect(x,y,size,size);
+    }
+  pctx.drawImage(srcCanvas, 0, 0);
+}
+
+btnBGRemove.addEventListener('click', async () => {
+  if (!imgA||!imgB) return;
+  btnBGRemove.disabled=true;
+  bgStatus.textContent='処理中...'; bgStatus.className='status';
+  await new Promise(r=>setTimeout(r,10));
+  try {
+    const thr=+bgThresholdSlider.value, fea=+bgFeatherSlider.value;
+    const resultA = removeWhiteBackground(imgA, protectMaskA||new Uint8Array(imgA.width*imgA.height), thr, fea);
+    const resultB = removeWhiteBackground(imgB, protectMaskB||new Uint8Array(imgB.width*imgB.height), thr, fea);
+    imgA = await base64ToImage(resultA.toDataURL().split(',')[1]);
+    imgB = await base64ToImage(resultB.toDataURL().split(',')[1]);
+    bgPreviews.style.display='block';
+    renderWithChecker(resultA,'bgPreviewA');
+    renderWithChecker(resultB,'bgPreviewB');
+    if (typeof drawPreviews==='function'){drawPreviews();buildStampsGrid();updateMainPreview();}
+    bgStatus.textContent='✓ 背景透過完了。'; bgStatus.className='status ok';
+  } catch(e) {
+    bgStatus.textContent='エラー: '+e.message; bgStatus.className='status err';
+  }
+  btnBGRemove.disabled=false;
+});
+
+btnBGReset.addEventListener('click', async () => {
+  if (!origImgA||!origImgB) return;
+  imgA=origImgA; imgB=origImgB;
+  protectMaskA=new Uint8Array(imgA.width*imgA.height);
+  protectMaskB=new Uint8Array(imgB.width*imgB.height);
+  bgPreviews.style.display='none';
+  bgStatus.textContent='元の画像に戻しました'; bgStatus.className='status';
+  redrawMaskCanvas();
+  if (typeof drawPreviews==='function'){drawPreviews();buildStampsGrid();updateMainPreview();}
+});
+
+const sliders = ['padTop','padBottom','padLeft','padRight','gapX','gapY'];
+sliders.forEach(id => {
+  const el = document.getElementById(id);
+  el.addEventListener('input', () => {
+    document.getElementById('v' + id.charAt(0).toUpperCase() + id.slice(1)).textContent = el.value;
+    drawPreviews();
+  });
+});
+
+dropZone.addEventListener('click', () => fileInput.click());
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => { e.preventDefault(); dropZone.classList.remove('drag-over'); handleFiles(e.dataTransfer.files); });
+fileInput.addEventListener('change', e => handleFiles(e.target.files));
+
+function handleFiles(files) {
+  const pngs = Array.from(files).filter(f => f.type === 'image/png');
+  if (pngs.length < 2) { sheetStatus.textContent = 'PNGファイルを2枚選んでください'; sheetStatus.className = 'status err'; return; }
+  const sorted = pngs.slice(0, 2).sort((a, b) => a.name.localeCompare(b.name));
+  let loaded = 0;
+  const imgs = [new Image(), new Image()];
+  sorted.forEach((f, i) => {
+    const url = URL.createObjectURL(f);
+    imgs[i].onload = () => {
+      loaded++;
+      if (loaded === 2) { imgA = imgs[0]; imgB = imgs[1]; onSheetsLoaded(sorted[0].name, sorted[1].name); }
+    };
+    imgs[i].src = url;
+  });
+}
+
+function onSheetsLoaded(nameA, nameB) {
+  origImgA = imgA; origImgB = imgB;
+  initBGUI();
+  sheetsPreview.style.display = 'grid';
+  sheetsPreview.innerHTML = '';
+  [imgA, imgB].forEach((img, i) => {
+    const div = document.createElement('div');
+    div.className = 'sheet-card';
+    const im = document.createElement('img');
+    im.src = img.src;
+    const lbl = document.createElement('div');
+    lbl.className = 'sheet-label';
+    lbl.textContent = i === 0 ? `A: ${nameA}（01〜16）` : `B: ${nameB}（17〜32）`;
+    const sw = document.createElement('button');
+    sw.className = 'swap-btn';
+    sw.textContent = '↔ 入替';
+    sw.onclick = () => { const tmp = imgA; imgA = imgB; imgB = tmp; onSheetsLoaded(nameB, nameA); };
+    div.appendChild(im); div.appendChild(lbl); div.appendChild(sw);
+    sheetsPreview.appendChild(div);
+  });
+  sheetStatus.textContent = '2枚読み込み完了';
+  sheetStatus.className = 'status ok';
+  stepGrid.style.display = 'block';
+  drawPreviews();
+  buildStampsGrid();
+  stepMain.style.display = 'block';
+  stepDownload.style.display = 'block';
+}
+
+function getGrid() {
+  return {
+    padTop: +document.getElementById('padTop').value,
+    padBottom: +document.getElementById('padBottom').value,
+    padLeft: +document.getElementById('padLeft').value,
+    padRight: +document.getElementById('padRight').value,
+    gapX: +document.getElementById('gapX').value,
+    gapY: +document.getElementById('gapY').value,
+  };
+}
+
+function drawPreviews() {
+  if (!imgA || !imgB) return;
+  drawGridPreview('previewA', imgA);
+  drawGridPreview('previewB', imgB);
+  buildStampsGrid();
+  updateMainPreview();
+}
+
+function drawGridPreview(canvasId, img) {
+  const g = getGrid();
+  const canvas = document.getElementById(canvasId);
+  canvas.width = img.width;
+  canvas.height = img.height;
+  const c = canvas.getContext('2d');
+  c.drawImage(img, 0, 0);
+  const innerW = img.width - g.padLeft - g.padRight;
+  const innerH = img.height - g.padTop - g.padBottom;
+  const cellW = (innerW - g.gapX * 3) / 4;
+  const cellH = (innerH - g.gapY * 3) / 4;
+  c.strokeStyle = 'rgba(255,80,80,0.8)';
+  c.lineWidth = Math.max(1, img.width / 400);
+  for (let row = 0; row < 4; row++) {
+    for (let col = 0; col < 4; col++) {
+      const x = g.padLeft + col * (cellW + g.gapX);
+      const y = g.padTop + row * (cellH + g.gapY);
+      c.strokeRect(x, y, cellW, cellH);
+    }
+  }
+}
+
+function extractCell(img, index) {
+  const g = getGrid();
+  const innerW = img.width - g.padLeft - g.padRight;
+  const innerH = img.height - g.padTop - g.padBottom;
+  const cellW = (innerW - g.gapX * 3) / 4;
+  const cellH = (innerH - g.gapY * 3) / 4;
+  const col = index % 4;
+  const row = Math.floor(index / 4);
+  const sx = g.padLeft + col * (cellW + g.gapX);
+  const sy = g.padTop + row * (cellH + g.gapY);
+  const out = document.createElement('canvas');
+  out.width = 370; out.height = 320;
+  const oc = out.getContext('2d');
+  oc.clearRect(0, 0, 370, 320);
+  oc.drawImage(img, sx, sy, cellW, cellH, 0, 0, 370, 320);
+  return out;
+}
+
+function buildStampsGrid() {
+  if (!imgA || !imgB) return;
+  stampsGrid.innerHTML = '';
+  stampCanvases = [];
+  for (let i = 0; i < 32; i++) {
+    const img = i < 16 ? imgA : imgB;
+    const localIdx = i < 16 ? i : i - 16;
+    const c = extractCell(img, localIdx);
+    stampCanvases.push(c);
+    const wrapper = document.createElement('div');
+    wrapper.className = 'stamp-thumb' + (i === selectedMain ? ' selected' : '');
+    const thumb = document.createElement('canvas');
+    thumb.width = c.width; thumb.height = c.height;
+    thumb.style.width = '100%';
+    thumb.getContext('2d').drawImage(c, 0, 0);
+    const num = document.createElement('div');
+    num.className = 'num';
+    num.textContent = String(i + 1).padStart(2, '0');
+    wrapper.appendChild(thumb);
+    wrapper.appendChild(num);
+    wrapper.onclick = () => { selectedMain = i; buildStampsGrid(); mainPreview.style.display = 'flex'; updateMainPreview(); };
+    stampsGrid.appendChild(wrapper);
+  }
+}
+
+function updateMainPreview() {
+  if (stampCanvases.length === 0) return;
+  const src = stampCanvases[selectedMain];
+  const pm = document.getElementById('prevMain');
+  pm.width = 96; pm.height = 96;
+  pm.getContext('2d').drawImage(src, 0, 0, 96, 96);
+  // tab.pngはアスペクト比保持でレターボックス
+  const pt = document.getElementById('prevTab');
+  pt.width = 48; pt.height = 37;
+  const ptCtx = pt.getContext('2d');
+  ptCtx.clearRect(0, 0, 48, 37);
+  const ts = fitInside(src.width, src.height, 48, 37);
+  ptCtx.drawImage(src, ts.x, ts.y, ts.w, ts.h);
+  mainPreview.style.display = 'flex';
+}
+
+// アスペクト比を保ちながら指定サイズに収める（レターボックス）
+function fitInside(srcW, srcH, dstW, dstH) {
+  const scale = Math.min(dstW / srcW, dstH / srcH);
+  const w = Math.round(srcW * scale);
+  const h = Math.round(srcH * scale);
+  return { x: Math.round((dstW - w) / 2), y: Math.round((dstH - h) / 2), w, h };
+}
+
+// アスペクト比保持リサイズ（透明余白つき）
+function resizeFit(srcCanvas, dstW, dstH) {
+  const out = document.createElement('canvas');
+  out.width = dstW; out.height = dstH;
+  const ctx2 = out.getContext('2d');
+  ctx2.clearRect(0, 0, dstW, dstH);
+  const f = fitInside(srcCanvas.width, srcCanvas.height, dstW, dstH);
+  ctx2.drawImage(srcCanvas, f.x, f.y, f.w, f.h);
+  return out;
+}
+
+// main.pngは単純リサイズ（240×240は正方形なので問題なし）
+function resizeTo(srcCanvas, w, h) {
+  const out = document.createElement('canvas');
+  out.width = w; out.height = h;
+  out.getContext('2d').drawImage(srcCanvas, 0, 0, w, h);
+  return out;
+}
+
+function canvasToBlob(canvas, quality) {
+  return new Promise(res => canvas.toBlob(res, 'image/png', quality));
+}
+
+btnDownload.addEventListener('click', async () => {
+  if (!imgA || !imgB) return;
+  btnDownload.disabled = true;
+  dlStatus.textContent = '生成中...';
+  dlStatus.className = 'status';
+  try {
+    const zip = new JSZip();
+    for (let i = 0; i < 32; i++) {
+      const c = stampCanvases[i];
+      const blob = await canvasToBlob(c);
+      zip.file(String(i + 1).padStart(2, '0') + '.png', blob);
+    }
+    const mainC = resizeTo(stampCanvases[selectedMain], 240, 240);
+    zip.file('main.png', await canvasToBlob(mainC));
+    // tab.pngはアスペクト比保持
+    const tabC = resizeFit(stampCanvases[selectedMain], 96, 74);
+    zip.file('tab.png', await canvasToBlob(tabC));
+    const content = await zip.generateAsync({ type: 'blob' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(content);
+    a.download = 'line_stamps.zip';
+    a.click();
+    dlStatus.textContent = '✓ ダウンロード完了（34ファイル）';
+    dlStatus.className = 'status ok';
+  } catch(e) {
+    dlStatus.textContent = 'エラー: ' + e.message;
+    dlStatus.className = 'status err';
+  }
+  btnDownload.disabled = false;
+});
+</script>
+</body>
+</html>
