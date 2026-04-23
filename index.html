@@ -76,7 +76,8 @@ h1 { font-size: 20px; font-weight: 500; padding: 20px 24px 0; }
       <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">
         <button class="btn" id="btnBrushProtect" style="background:#2a7;border-color:#2a7;padding:7px 14px;font-size:12px;">🛡 保護ブラシ</button>
         <button class="btn btn-outline" id="btnBrushErase" style="padding:7px 14px;font-size:12px;">✕ 保護解除</button>
-        <button class="btn btn-outline" id="btnBrushClear" style="padding:7px 14px;font-size:12px;">🗑 保護リセット</button>
+        <button class="btn btn-outline" id="btnBrushDelete" style="padding:7px 14px;font-size:12px;">🗑 消去ブラシ</button>
+        <button class="btn btn-outline" id="btnBrushClear" style="padding:7px 14px;font-size:12px;color:#c44;border-color:#c44;">↺ 全リセット</button>
         <div style="display:flex;align-items:center;gap:6px;margin-left:8px;">
           <span style="font-size:12px;color:#666;">サイズ</span>
           <input type="range" id="brushSize" min="2" max="60" value="16" step="1" style="width:80px;">
@@ -84,7 +85,7 @@ h1 { font-size: 20px; font-weight: 500; padding: 20px 24px 0; }
         </div>
       </div>
       <p style="font-size:11px;color:#888;margin-bottom:8px;">
-        🛡 保護ブラシ＝透過させたくない境界をなぞる（緑表示）　✕ 保護解除＝保護を消す
+        🛡 保護＝透過させない（緑）　✕ 保護解除　🗑 消去＝強制的に透明にする（青）　↺ 全リセット
       </p>
       <!-- シート選択タブ -->
       <div style="display:flex;gap:4px;margin-bottom:6px;">
@@ -100,7 +101,7 @@ h1 { font-size: 20px; font-weight: 500; padding: 20px 24px 0; }
       <div id="brushCursor" style="position:absolute;border:1.5px solid #333;border-radius:50%;pointer-events:none;display:none;transform:translate(-50%,-50%);"></div>
     </div>
 
-    <p style="font-size:11px;color:#e07000;margin-bottom:10px;">▼ 赤＝透過予定　緑＝保護（透過しない）　スライダー変更で即時更新</p>
+    <p style="font-size:11px;color:#e07000;margin-bottom:10px;">▼ 赤＝透過予定　緑＝保護（透過しない）　青＝強制消去　スライダー変更で即時更新</p>
 
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">
       <button class="btn" id="btnBGRemove" style="background:#2a9d6a;border-color:#2a9d6a;">✦ この設定で透過を実行</button>
@@ -232,6 +233,7 @@ const bgFeatherSlider   = document.getElementById('bgFeather');
 const brushSizeSlider   = document.getElementById('brushSize');
 const btnBrushProtect   = document.getElementById('btnBrushProtect');
 const btnBrushErase     = document.getElementById('btnBrushErase');
+const btnBrushDelete    = document.getElementById('btnBrushDelete');
 const btnBrushClear     = document.getElementById('btnBrushClear');
 const tabSheetA         = document.getElementById('tabSheetA');
 const tabSheetB         = document.getElementById('tabSheetB');
@@ -257,8 +259,10 @@ function base64ToImage(b64) {
 let origImgA = null, origImgB = null;
 // 保護マスク（0=通常 1=保護）をシートA/B別に管理
 let protectMaskA = null, protectMaskB = null;
-let activeSheet = 'A'; // 現在編集中のシート
-let brushMode = 'protect'; // 'protect' or 'erase'
+// 消去マスク（0=通常 1=強制透明）をシートA/B別に管理
+let deleteMaskA = null, deleteMaskB = null;
+let activeSheet = 'A';
+let brushMode = 'protect'; // 'protect' | 'erase' | 'delete'
 let isPainting = false;
 
 brushSizeSlider.addEventListener('input', () => {
@@ -289,24 +293,26 @@ function buildFloodMask(img, threshold) {
   return {mask,w,h};
 }
 
-// ブラシキャンバスを描画（赤=透過予定 緑=保護）
+// ブラシキャンバスを描画（赤=透過予定 緑=保護 青=強制消去）
 function redrawMaskCanvas() {
   const img = activeSheet==='A' ? imgA : imgB;
   const protectMask = activeSheet==='A' ? protectMaskA : protectMaskB;
-  if (!img || !protectMask) return;
+  const deleteMask  = activeSheet==='A' ? deleteMaskA  : deleteMaskB;
+  if (!img || !protectMask || !deleteMask) return;
 
   const thr = +bgThresholdSlider.value;
   const {mask:floodMask, w, h} = buildFloodMask(img, thr);
 
   maskCanvas.width = w; maskCanvas.height = h;
   const ctx2 = maskCanvas.getContext('2d');
-  // 元画像
   ctx2.drawImage(imageToCanvas(img), 0, 0);
-  // オーバーレイ
   const overlay = ctx2.getImageData(0, 0, w, h);
   const od = overlay.data;
   for (let i=0; i<w*h; i++) {
-    if (protectMask[i]) {
+    if (deleteMask[i]) {
+      // 強制消去: 青
+      od[i*4]=40; od[i*4+1]=100; od[i*4+2]=220; od[i*4+3]=180;
+    } else if (protectMask[i]) {
       // 保護: 緑
       od[i*4]=40; od[i*4+1]=180; od[i*4+2]=80; od[i*4+3]=160;
     } else if (floodMask[i]) {
@@ -345,23 +351,24 @@ tabSheetA.addEventListener('click', () => setActiveSheet('A'));
 tabSheetB.addEventListener('click', () => setActiveSheet('B'));
 
 // ブラシモード切替
-btnBrushProtect.addEventListener('click', () => {
-  brushMode='protect';
-  btnBrushProtect.style.opacity='1';
-  btnBrushErase.style.opacity='0.55';
-  maskCanvas.style.cursor='crosshair';
-});
-btnBrushErase.addEventListener('click', () => {
-  brushMode='erase';
-  btnBrushProtect.style.opacity='0.55';
-  btnBrushErase.style.opacity='1';
-  maskCanvas.style.cursor='cell';
-});
+function setBrushMode(mode) {
+  brushMode = mode;
+  btnBrushProtect.style.opacity = mode==='protect' ? '1' : '0.55';
+  btnBrushErase.style.opacity   = mode==='erase'   ? '1' : '0.55';
+  btnBrushDelete.style.opacity  = mode==='delete'  ? '1' : '0.55';
+  const colors = { protect:'#2a7', erase:'#c44', delete:'#36c' };
+  brushCursor.style.borderColor = colors[mode];
+}
+btnBrushProtect.addEventListener('click', () => setBrushMode('protect'));
+btnBrushErase.addEventListener('click',   () => setBrushMode('erase'));
+btnBrushDelete.addEventListener('click',  () => setBrushMode('delete'));
+
 btnBrushClear.addEventListener('click', () => {
   const img = activeSheet==='A' ? imgA : imgB;
   if (!img) return;
-  if (activeSheet==='A') protectMaskA = new Uint8Array(img.width * img.height);
-  else protectMaskB = new Uint8Array(img.width * img.height);
+  const size = img.width * img.height;
+  if (activeSheet==='A') { protectMaskA = new Uint8Array(size); deleteMaskA = new Uint8Array(size); }
+  else                   { protectMaskB = new Uint8Array(size); deleteMaskB = new Uint8Array(size); }
   redrawMaskCanvas();
 });
 
@@ -369,7 +376,8 @@ btnBrushClear.addEventListener('click', () => {
 function paintAt(cx, cy) {
   const img = activeSheet==='A' ? imgA : imgB;
   const protectMask = activeSheet==='A' ? protectMaskA : protectMaskB;
-  if (!img || !protectMask) return;
+  const deleteMask  = activeSheet==='A' ? deleteMaskA  : deleteMaskB;
+  if (!img || !protectMask || !deleteMask) return;
 
   const rect = maskCanvas.getBoundingClientRect();
   const scaleX = img.width / rect.width;
@@ -381,10 +389,17 @@ function paintAt(cx, cy) {
   const w = img.width, h = img.height;
 
   for (let dy=-ry; dy<=ry; dy++) for (let dx=-rx; dx<=rx; dx++) {
-    if ((dx*dx)/(rx*rx)+(dy*dy)/(ry*ry) > 1) continue;
+    if ((dx*dx)/(rx||1)**2+(dy*dy)/(ry||1)**2 > 1) continue;
     const x=px+dx, y=py+dy;
     if (x<0||y<0||x>=w||y>=h) continue;
-    protectMask[y*w+x] = brushMode==='protect' ? 1 : 0;
+    const idx = y*w+x;
+    if (brushMode==='protect') {
+      protectMask[idx]=1; deleteMask[idx]=0;
+    } else if (brushMode==='erase') {
+      protectMask[idx]=0;
+    } else if (brushMode==='delete') {
+      deleteMask[idx]=1; protectMask[idx]=0;
+    }
   }
   redrawMaskCanvas();
 }
@@ -398,12 +413,10 @@ maskCanvas.addEventListener('mousedown', e => {
 maskCanvas.addEventListener('mousemove', e => {
   const r = maskCanvas.getBoundingClientRect();
   const x = e.clientX - r.left, y = e.clientY - r.top;
-  // カーソル表示
   const sz = +brushSizeSlider.value;
   brushCursor.style.display = 'block';
   brushCursor.style.left = x+'px'; brushCursor.style.top = y+'px';
   brushCursor.style.width = sz+'px'; brushCursor.style.height = sz+'px';
-  brushCursor.style.borderColor = brushMode==='protect' ? '#2a7' : '#c44';
   if (isPainting) paintAt(x, y);
 });
 maskCanvas.addEventListener('mouseup', () => { isPainting=false; });
@@ -427,24 +440,23 @@ function initBGUI() {
   bgStatus.textContent = '';
   activeSheet = 'A';
   tabSheetA.className='btn'; tabSheetB.className='btn btn-outline';
-  brushMode = 'protect';
-  btnBrushProtect.style.opacity='1'; btnBrushErase.style.opacity='0.55';
-  if (imgA) protectMaskA = new Uint8Array(imgA.width * imgA.height);
-  if (imgB) protectMaskB = new Uint8Array(imgB.width * imgB.height);
+  setBrushMode('protect');
+  if (imgA) { protectMaskA = new Uint8Array(imgA.width * imgA.height); deleteMaskA = new Uint8Array(imgA.width * imgA.height); }
+  if (imgB) { protectMaskB = new Uint8Array(imgB.width * imgB.height); deleteMaskB = new Uint8Array(imgB.width * imgB.height); }
   setTimeout(redrawMaskCanvas, 80);
 }
 
 // 透過実行
-function removeWhiteBackground(img, protectMask, threshold, featherPx) {
+function removeWhiteBackground(img, protectMask, deleteMask, threshold, featherPx) {
   const {mask:floodMask, w, h} = buildFloodMask(img, threshold);
   const c = imageToCanvas(img);
   const ctx2 = c.getContext('2d');
   const imageData = ctx2.getImageData(0, 0, w, h);
   const data = imageData.data;
 
-  // 透過: フラッドフィル対象 かつ 保護なし
+  // 透過: フラッドフィル対象かつ保護なし、または消去ブラシ指定
   for (let idx=0; idx<w*h; idx++) {
-    if (floodMask[idx] && !protectMask[idx]) data[idx*4+3]=0;
+    if ((floodMask[idx] && !protectMask[idx]) || deleteMask[idx]) data[idx*4+3]=0;
   }
 
   if (featherPx>0) {
@@ -484,8 +496,10 @@ btnBGRemove.addEventListener('click', async () => {
   await new Promise(r=>setTimeout(r,10));
   try {
     const thr=+bgThresholdSlider.value, fea=+bgFeatherSlider.value;
-    const resultA = removeWhiteBackground(imgA, protectMaskA||new Uint8Array(imgA.width*imgA.height), thr, fea);
-    const resultB = removeWhiteBackground(imgB, protectMaskB||new Uint8Array(imgB.width*imgB.height), thr, fea);
+    const emptyA = new Uint8Array(imgA.width*imgA.height);
+    const emptyB = new Uint8Array(imgB.width*imgB.height);
+    const resultA = removeWhiteBackground(imgA, protectMaskA||emptyA, deleteMaskA||emptyA, thr, fea);
+    const resultB = removeWhiteBackground(imgB, protectMaskB||emptyB, deleteMaskB||emptyB, thr, fea);
     imgA = await base64ToImage(resultA.toDataURL().split(',')[1]);
     imgB = await base64ToImage(resultB.toDataURL().split(',')[1]);
     bgPreviews.style.display='block';
@@ -504,6 +518,8 @@ btnBGReset.addEventListener('click', async () => {
   imgA=origImgA; imgB=origImgB;
   protectMaskA=new Uint8Array(imgA.width*imgA.height);
   protectMaskB=new Uint8Array(imgB.width*imgB.height);
+  deleteMaskA =new Uint8Array(imgA.width*imgA.height);
+  deleteMaskB =new Uint8Array(imgB.width*imgB.height);
   bgPreviews.style.display='none';
   bgStatus.textContent='元の画像に戻しました'; bgStatus.className='status';
   redrawMaskCanvas();
