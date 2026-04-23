@@ -677,7 +677,10 @@ function updateMainPreview() {
   const src = stampCanvases[selectedMain];
   const pm = document.getElementById('prevMain');
   pm.width = 96; pm.height = 96;
-  pm.getContext('2d').drawImage(src, 0, 0, 96, 96);
+  const pmCtx = pm.getContext('2d');
+  pmCtx.clearRect(0, 0, 96, 96);
+  const ms = fitInside(src.width, src.height, 96, 96);
+  pmCtx.drawImage(src, ms.x, ms.y, ms.w, ms.h);
   // tab.pngはアスペクト比保持でレターボックス
   const pt = document.getElementById('prevTab');
   pt.width = 48; pt.height = 37;
@@ -731,7 +734,7 @@ btnDownload.addEventListener('click', async () => {
       const blob = await canvasToBlob(c);
       zip.file(String(i + 1).padStart(2, '0') + '.png', blob);
     }
-    const mainC = resizeTo(stampCanvases[selectedMain], 240, 240);
+    const mainC = resizeFit(stampCanvases[selectedMain], 240, 240);
     zip.file('main.png', await canvasToBlob(mainC));
     // tab.pngはアスペクト比保持
     const tabC = resizeFit(stampCanvases[selectedMain], 96, 74);
