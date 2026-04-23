@@ -625,7 +625,9 @@ function extractCell(img, index) {
   out.width = 370; out.height = 320;
   const oc = out.getContext('2d');
   oc.clearRect(0, 0, 370, 320);
-  oc.drawImage(img, sx, sy, cellW, cellH, 0, 0, 370, 320);
+  // アスペクト比を保ったまま370×320に収める（レターボックス）
+  const f = fitInside(cellW, cellH, 370, 320);
+  oc.drawImage(img, sx, sy, cellW, cellH, f.x, f.y, f.w, f.h);
   return out;
 }
 
